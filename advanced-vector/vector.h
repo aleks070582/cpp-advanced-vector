@@ -20,6 +20,18 @@ class Vector {
 
     RawMemory<T> data_;
     size_t size_ = 0;
+    Vector& CopyExisting(const Vector& rhs) {
+        size_t common_size = std::min(size_, rhs.size_);
+        std::copy(rhs.begin(), rhs.begin() + common_size, begin());
+        if (rhs.size_ > size_) {
+            std::uninitialized_copy_n(rhs.begin() + size_, rhs.size_ - size_, begin() + size_);
+        }
+        else {
+            std::destroy_n(begin() + rhs.size_, size_ - rhs.size_);
+        }
+        size_ = rhs.size_;
+        return *this;
+    }
 public:
     using iterator = T*;
     using const_iterator = const T*;
@@ -38,9 +50,7 @@ public:
         size_ = other.size_;
     }
     Vector(Vector&& other) noexcept {
-        data_ = std::move(other.data_);
-        size_ = other.size_;
-        other.size_ = 0;
+        Swap(other);
     }
     void Resize(size_t new_size) {
         if (new_size == size_) {
@@ -57,48 +67,14 @@ public:
         }
     }
     void PushBack(const T& value) {
-        if (size_ < data_.Capacity()) {
-            new (data_.GetAddress() + size_) T(value);
-            ++size_;
-            return;
-        }
-        size_t new_cap = size_ == 0 ? 1 : size_ * 2;
-        RawMemory<T> new_data(new_cap);
-        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-            std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
-        }
-        else {
-            std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
-        }
-        new (new_data.GetAddress() + size_) T(value);
-
-        // 3) теперь, когда ничего не упало, уничтожаем старые и меняем буферы
-        std::destroy_n(data_.GetAddress(), size_);
-        data_.Swap(new_data);
-        ++size_;
+        EmplaceBack(value);
     }
     void PushBack(T&& value) {
-        if (size_ < data_.Capacity()) {
-            new (data_.GetAddress() + size_) T(std::move(value));
-            ++size_;
-            return;
-        }
-        size_t new_cap = size_ == 0 ? 1 : size_ * 2;
-        RawMemory<T> new_data(new_cap);
-
-        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-            std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
-        }
-        else {
-            std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
-        }
-        new (new_data.GetAddress() + size_) T(std::move(value));
-        std::destroy_n(data_.GetAddress(), size_);
-        data_.Swap(new_data);
-        ++size_;
+        EmplaceBack(std::move(value));
     }
 
     void PopBack() {
+        assert(size_ != 0);
         Resize(size_ - 1);
     }
     size_t Size() const noexcept {
@@ -117,17 +93,8 @@ public:
             Swap(tmp);
         }
         else {
-            size_t i = 0;
-            for (; i < std::min(size_, rhs.size_); ++i) {
-                data_[i] = rhs.data_[i];
-            }
-            if (i < rhs.size_) {
-                std::uninitialized_copy_n(rhs.data_ + i, rhs.size_ - i, data_ + i);
-            }
-            else {
-                std::destroy_n(data_ + i, size_ - i);
-            }
-            size_ = rhs.size_;
+            return CopyExisting(rhs);
+
         }
 
         return *this;
@@ -136,9 +103,7 @@ public:
         if (this == &rhs) {
             return *this;
         }
-        data_ = std::move(rhs.data_);
-        size_ = rhs.size_;
-        rhs.size_ = 0;
+        Swap(rhs);
         return *this;
     }
     const T& operator[](size_t index) const noexcept {
@@ -204,6 +169,7 @@ public:
 
     template <typename... Args>
     iterator Emplace(const_iterator pos, Args&&... args) {
+        assert(pos >= begin() && pos <= end());
         size_t index = pos - begin();
         T* result = nullptr;
         if (size_ < data_.Capacity()) {
@@ -254,6 +220,7 @@ public:
 
 
     iterator Erase(const_iterator pos) {
+        assert(pos >= begin() && pos < end());
         size_t index = pos - begin();
         iterator non_const_pos = begin() + index;
         if constexpr (std::is_move_assignable_v<T>) {
@@ -297,16 +264,11 @@ public:
     RawMemory() = default;
     RawMemory(const RawMemory& rh) = delete;
     RawMemory(RawMemory&& other) noexcept {
-        buffer_ = std::move(other.buffer_);
-        capacity_ = other.capacity_;
-        other.capacity_ = 0;
+        Swap(other);
     }
     RawMemory& operator=(RawMemory&& rhs) noexcept {
-        if (this->buffer_ != rhs.buffer_) {
-            capacity_ = rhs.capacity_;
-            std::swap(buffer_, rhs.buffer_);
-            rhs.buffer_ = nullptr;
-            rhs.capacity_ = 0;
+        if (this!= &rhs) {
+            Swap(rhs);
         }
         return *this;
     }
@@ -369,4 +331,4 @@ private:
 
     T* buffer_ = nullptr;
     size_t capacity_ = 0;
-}
+};
